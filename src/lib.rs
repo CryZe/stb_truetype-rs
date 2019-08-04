@@ -46,7 +46,7 @@ fn read_u16_into(src: &[u8], dst: &mut [u16]) {
 }
 
 fn read_u32_into(src: &[u8], dst: &mut [u32]) {
-    let mut windows = src.windows(2);
+    let mut windows = src.windows(4);
     for dst in dst {
         *dst = read_u32(windows.next().unwrap());
     }
