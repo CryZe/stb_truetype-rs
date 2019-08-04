@@ -32,23 +32,23 @@ fn read_i16(s: &[u8]) -> i16 {
 }
 
 fn read_i16_into(src: &[u8], dst: &mut [i16]) {
-    let mut windows = src.windows(2);
+    let mut chunks = src.chunks(2);
     for dst in dst {
-        *dst = read_i16(windows.next().unwrap());
+        *dst = read_i16(chunks.next().unwrap());
     }
 }
 
 fn read_u16_into(src: &[u8], dst: &mut [u16]) {
-    let mut windows = src.windows(2);
+    let mut chunks = src.chunks(2);
     for dst in dst {
-        *dst = read_u16(windows.next().unwrap());
+        *dst = read_u16(chunks.next().unwrap());
     }
 }
 
 fn read_u32_into(src: &[u8], dst: &mut [u32]) {
-    let mut windows = src.windows(4);
+    let mut chunks = src.chunks(4);
     for dst in dst {
-        *dst = read_u32(windows.next().unwrap());
+        *dst = read_u32(chunks.next().unwrap());
     }
 }
 
