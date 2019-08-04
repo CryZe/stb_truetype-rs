@@ -4,9 +4,53 @@
     clippy::cast_lossless,
     clippy::many_single_char_names
 )]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-use byteorder::{BigEndian as BE, ByteOrder};
-use std::ops::Deref;
+extern crate alloc;
+
+// use byteorder::{BigEndian as BE, ByteOrder};
+use alloc::vec::Vec;
+use core::convert::TryInto;
+use core::ops::Deref;
+#[cfg(not(feature = "std"))]
+use libm::F32Ext;
+
+fn read_u32(s: &[u8]) -> u32 {
+    u32::from_be_bytes(s[..4].try_into().unwrap())
+}
+
+fn read_i32(s: &[u8]) -> i32 {
+    i32::from_be_bytes(s[..4].try_into().unwrap())
+}
+
+fn read_u16(s: &[u8]) -> u16 {
+    u16::from_be_bytes(s[..2].try_into().unwrap())
+}
+
+fn read_i16(s: &[u8]) -> i16 {
+    i16::from_be_bytes(s[..2].try_into().unwrap())
+}
+
+fn read_i16_into(src: &[u8], dst: &mut [i16]) {
+    let mut windows = src.windows(2);
+    for dst in dst {
+        *dst = read_i16(windows.next().unwrap());
+    }
+}
+
+fn read_u16_into(src: &[u8], dst: &mut [u16]) {
+    let mut windows = src.windows(2);
+    for dst in dst {
+        *dst = read_u16(windows.next().unwrap());
+    }
+}
+
+fn read_u32_into(src: &[u8], dst: &mut [u32]) {
+    let mut windows = src.windows(2);
+    for dst in dst {
+        *dst = read_u32(windows.next().unwrap());
+    }
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct FontInfo<Data: Deref<Target = [u8]>> {
@@ -335,12 +379,12 @@ pub fn is_collection(data: &[u8]) -> bool {
 }
 
 fn find_table(data: &[u8], fontstart: usize, tag: &[u8]) -> u32 {
-    let num_tables = BE::read_u16(&data[fontstart + 4..]);
+    let num_tables = read_u16(&data[fontstart + 4..]);
     let tabledir = fontstart + 12;
     for i in 0..num_tables {
         let loc = tabledir + 16 * (i as usize);
         if &data[loc..loc + 4] == tag {
-            return BE::read_u32(&data[loc + 8..]);
+            return read_u32(&data[loc + 8..]);
         }
     }
     0
@@ -359,14 +403,14 @@ pub fn get_font_offset_for_index(font_collection: &[u8], index: i32) -> Option<u
     }
     // check if it's a TTC
     if is_collection(font_collection)
-        && (BE::read_u32(&font_collection[4..]) == 0x0001_0000
-            || BE::read_u32(&font_collection[4..]) == 0x0002_0000)
+        && (read_u32(&font_collection[4..]) == 0x0001_0000
+            || read_u32(&font_collection[4..]) == 0x0002_0000)
     {
-        let n = BE::read_i32(&font_collection[8..]);
+        let n = read_i32(&font_collection[8..]);
         if index >= n {
             return None;
         }
-        return Some(BE::read_u32(&font_collection[12 + (index as usize) * 4..]));
+        return Some(read_u32(&font_collection[12 + (index as usize) * 4..]));
     }
     None
 }
@@ -375,19 +419,19 @@ macro_rules! read_ints {
     ($n:expr, i16, $data:expr) => {{
         let mut nums = [0; $n];
         let data = $data;
-        BE::read_i16_into(&data[..$n * 2], &mut nums);
+        read_i16_into(&data[..$n * 2], &mut nums);
         nums
     }};
     ($n:expr, u16, $data:expr) => {{
         let mut nums = [0; $n];
         let data = $data;
-        BE::read_u16_into(&data[..$n * 2], &mut nums);
+        read_u16_into(&data[..$n * 2], &mut nums);
         nums
     }};
     ($n:expr, u32, $data:expr) => {{
         let mut nums = [0; $n];
         let data = $data;
-        BE::read_u32_into(&data[..$n * 4], &mut nums);
+        read_u32_into(&data[..$n * 4], &mut nums);
         nums
     }};
 }
@@ -409,7 +453,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
         }
         let t = find_table(&data, fontstart, b"maxp");
         let num_glyphs = if t != 0 {
-            BE::read_u16(&data[t as usize + 4..])
+            read_u16(&data[t as usize + 4..])
         } else {
             0xffff
         };
@@ -417,17 +461,17 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
         // find a cmap encoding table we understand *now* to avoid searching
         // later. (todo: could make this installable)
         // the same regardless of glyph.
-        let num_tables = BE::read_u16(&data[cmap as usize + 2..]);
+        let num_tables = read_u16(&data[cmap as usize + 2..]);
         let mut index_map = 0;
         for i in 0..num_tables {
             let encoding_record = (cmap + 4 + 8 * (i as u32)) as usize;
             // find an encoding we understand:
-            match platform_id(BE::read_u16(&data[encoding_record..])) {
+            match platform_id(read_u16(&data[encoding_record..])) {
                 Some(PlatformId::Microsoft) => {
-                    match microsoft_eid(BE::read_u16(&data[encoding_record + 2..])) {
+                    match microsoft_eid(read_u16(&data[encoding_record + 2..])) {
                         Some(MicrosoftEid::UnicodeBMP) | Some(MicrosoftEid::UnicodeFull) => {
                             // MS/Unicode
-                            index_map = cmap + BE::read_u32(&data[encoding_record + 4..]);
+                            index_map = cmap + read_u32(&data[encoding_record + 4..]);
                         }
                         _ => (),
                     }
@@ -435,7 +479,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
                 Some(PlatformId::Unicode) => {
                     // Mac/iOS has these
                     // all the encodingIDs are unicode, so we don't bother to check it
-                    index_map = cmap + BE::read_u32(&data[encoding_record + 4..]);
+                    index_map = cmap + read_u32(&data[encoding_record + 4..]);
                 }
                 _ => (),
             }
@@ -443,7 +487,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
         if index_map == 0 {
             return None;
         }
-        let index_to_loc_format = BE::read_u16(&data[head as usize + 50..]) as u32;
+        let index_to_loc_format = read_u16(&data[head as usize + 50..]) as u32;
         Some(FontInfo {
             // fontstart: fontstart,
             data,
@@ -472,21 +516,21 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
         let data = &self.data;
         let index_map = &data[self.index_map as usize..]; //self.index_map as usize;
 
-        let format = BE::read_u16(index_map);
+        let format = read_u16(index_map);
         match format {
             0 => {
                 // apple byte encoding
-                let bytes = BE::read_u16(&index_map[2..]);
+                let bytes = read_u16(&index_map[2..]);
                 if unicode_codepoint < bytes as u32 - 6 {
                     return index_map[6 + unicode_codepoint as usize] as u32;
                 }
                 0
             }
             6 => {
-                let first = BE::read_u16(&index_map[6..]) as u32;
-                let count = BE::read_u16(&index_map[8..]) as u32;
+                let first = read_u16(&index_map[6..]) as u32;
+                let count = read_u16(&index_map[8..]) as u32;
                 if unicode_codepoint >= first && unicode_codepoint < first + count {
-                    return BE::read_u16(&index_map[10 + (unicode_codepoint - first) as usize * 2..])
+                    return read_u16(&index_map[10 + (unicode_codepoint - first) as usize * 2..])
                         as u32;
                 }
                 0
@@ -497,10 +541,10 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
             }
             4 => {
                 // standard mapping for windows fonts: binary search collection of ranges
-                let segcount = BE::read_u16(&index_map[6..]) as usize >> 1;
-                let mut search_range = BE::read_u16(&index_map[8..]) as usize >> 1;
-                let mut entry_selector = BE::read_u16(&index_map[10..]);
-                let range_shift = BE::read_u16(&index_map[12..]) as usize >> 1;
+                let segcount = read_u16(&index_map[6..]) as usize >> 1;
+                let mut search_range = read_u16(&index_map[8..]) as usize >> 1;
+                let mut entry_selector = read_u16(&index_map[10..]);
+                let range_shift = read_u16(&index_map[12..]) as usize >> 1;
 
                 // do a binary search of the segments
                 let end_count = self.index_map as usize + 14;
@@ -512,7 +556,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
 
                 // they lie from endCount .. endCount + segCount
                 // but searchRange is the nearest power of two, so...
-                if unicode_codepoint >= BE::read_u16(&data[search + range_shift * 2..]) as u32 {
+                if unicode_codepoint >= read_u16(&data[search + range_shift * 2..]) as u32 {
                     search += range_shift * 2;
                 }
 
@@ -520,7 +564,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
                 search -= 2;
                 while entry_selector != 0 {
                     search_range >>= 1;
-                    let end = BE::read_u16(&data[search + search_range * 2..]) as u32;
+                    let end = read_u16(&data[search + search_range * 2..]) as u32;
                     if unicode_codepoint > end {
                         search += search_range * 2;
                     }
@@ -530,21 +574,18 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
 
                 {
                     let item = (search - end_count) >> 1;
-                    assert!(
-                        unicode_codepoint <= BE::read_u16(&data[end_count + 2 * item..]) as u32
-                    );
-                    let start = BE::read_u16(&index_map[14 + segcount * 2 + 2 + 2 * item..]) as u32;
+                    assert!(unicode_codepoint <= read_u16(&data[end_count + 2 * item..]) as u32);
+                    let start = read_u16(&index_map[14 + segcount * 2 + 2 + 2 * item..]) as u32;
                     if unicode_codepoint < start {
                         return 0;
                     }
-                    let offset =
-                        BE::read_u16(&index_map[14 + segcount * 6 + 2 + 2 * item..]) as usize;
+                    let offset = read_u16(&index_map[14 + segcount * 6 + 2 + 2 * item..]) as usize;
                     if offset == 0 {
                         return (unicode_codepoint as i32
-                            + BE::read_i16(&index_map[14 + segcount * 4 + 2 + 2 * item..]) as i32)
+                            + read_i16(&index_map[14 + segcount * 4 + 2 + 2 * item..]) as i32)
                             as u16 as u32;
                     }
-                    BE::read_u16(
+                    read_u16(
                         &index_map[offset
                             + (unicode_codepoint - start) as usize * 2
                             + 14
@@ -556,7 +597,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
             }
             12 | 13 => {
                 let mut low = 0u32;
-                let mut high = BE::read_u32(&index_map[12..]);
+                let mut high = read_u32(&index_map[12..]);
                 let groups = &index_map[16..];
 
                 // Binary search of the right group
@@ -564,13 +605,13 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
                     let mid = (low + high) / 2; // rounds down, so low <= mid < high
                     let mid12 = (mid * 12) as usize;
                     let group = &groups[mid12..mid12 + 12];
-                    let start_char = BE::read_u32(group);
+                    let start_char = read_u32(group);
                     if unicode_codepoint < start_char {
                         high = mid;
-                    } else if unicode_codepoint > BE::read_u32(&group[4..]) {
+                    } else if unicode_codepoint > read_u32(&group[4..]) {
                         low = mid + 1;
                     } else {
-                        let start_glyph = BE::read_u32(&group[8..]);
+                        let start_glyph = read_u32(&group[8..]);
                         if format == 12 {
                             return start_glyph + unicode_codepoint - start_char;
                         } else {
@@ -636,7 +677,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
     pub fn is_glyph_empty(&self, glyph_index: u32) -> bool {
         match self.get_glyf_offset(glyph_index) {
             Some(g) => {
-                let number_of_contours = BE::read_i16(&self.data[g as usize..]);
+                let number_of_contours = read_i16(&self.data[g as usize..]);
                 number_of_contours == 0
             }
             None => true,
@@ -651,7 +692,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
             None => return None,
         };
 
-        let number_of_contours = BE::read_i16(g);
+        let number_of_contours = read_i16(g);
         let vertices: Vec<Vertex> = if number_of_contours > 0 {
             self.glyph_shape_positive_contours(g, number_of_contours as usize)
         } else if number_of_contours == -1 {
@@ -684,7 +725,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
                 }
                 if flags & (1 << 3) != 0 {
                     // WE_HAVE_A_SCALE
-                    mtx[0] = BE::read_i16(comp) as f32 / 16384.0;
+                    mtx[0] = read_i16(comp) as f32 / 16384.0;
                     comp = &comp[2..];
                     mtx[1] = 0.0;
                     mtx[2] = 0.0;
@@ -808,10 +849,10 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
         let mut start_off = false;
         let mut was_off = false;
         let end_points_of_contours = &glyph_data[10..];
-        let ins = BE::read_u16(&glyph_data[10 + number_of_contours * 2..]) as usize;
+        let ins = read_u16(&glyph_data[10 + number_of_contours * 2..]) as usize;
         let mut points = &glyph_data[10 + number_of_contours * 2 + 2 + ins..];
 
-        let n = 1 + BE::read_u16(&end_points_of_contours[number_of_contours * 2 - 2..]) as usize;
+        let n = 1 + read_u16(&end_points_of_contours[number_of_contours * 2 - 2..]) as usize;
 
         let m = n + 2 * number_of_contours; // a loose bound on how many vertices we might need
         let mut vertices: Vec<Vertex> = Vec::with_capacity(m);
@@ -856,7 +897,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
                     x_coord -= dx;
                 }
             } else if flags & 16 == 0 {
-                x_coord += BE::read_i16(points);
+                x_coord += read_i16(points);
                 points = &points[2..];
             }
             flag_data.x = x_coord;
@@ -875,7 +916,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
                     y_coord -= dy;
                 }
             } else if flags & 32 == 0 {
-                y_coord += BE::read_i16(points);
+                y_coord += read_i16(points);
                 points = &points[2..];
             }
             flag_data.y = y_coord;
@@ -937,7 +978,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
                     cy: 0,
                 });
                 was_off = false;
-                next_move = 1 + BE::read_u16(&end_points_of_contours[j * 2..]) as usize;
+                next_move = 1 + read_u16(&end_points_of_contours[j * 2..]) as usize;
                 j += 1;
             } else if flags & 1 == 0 {
                 // if it's a curve
@@ -995,7 +1036,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
     /// like `get_codepoint_h_metrics`, but takes a glyph index instead. Use
     /// this if you have cached the glyph index for a codepoint.
     pub fn get_glyph_h_metrics(&self, glyph_index: u32) -> HMetrics {
-        let num_of_long_hor_metrics = BE::read_u16(&self.data[self.hhea as usize + 34..]) as usize;
+        let num_of_long_hor_metrics = read_u16(&self.data[self.hhea as usize + 34..]) as usize;
         let glyph_index = glyph_index as usize;
         if glyph_index < num_of_long_hor_metrics {
             let data = &self.data[self.hmtx as usize + 4 * glyph_index..];
@@ -1006,10 +1047,10 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
             }
         } else {
             HMetrics {
-                advance_width: BE::read_i16(
+                advance_width: read_i16(
                     &self.data[self.hmtx as usize + 4 * (num_of_long_hor_metrics - 1)..],
                 ) as i32,
-                left_side_bearing: BE::read_i16(
+                left_side_bearing: read_i16(
                     &self.data[self.hmtx as usize
                         + 4 * num_of_long_hor_metrics
                         + 2 * (glyph_index as isize - num_of_long_hor_metrics as isize) as usize..],
@@ -1023,7 +1064,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
     pub fn get_glyph_kern_advance(&self, glyph_1: u32, glyph_2: u32) -> i32 {
         let kern = &self.data[self.kern as usize..];
         // we only look at the first table. it must be 'horizontal' and format 0
-        if self.kern == 0 || BE::read_u16(&kern[2..]) < 1 || BE::read_u16(&kern[8..]) != 1 {
+        if self.kern == 0 || read_u16(&kern[2..]) < 1 || read_u16(&kern[8..]) != 1 {
             // kern not present, OR
             // no tables (need at least one), OR
             // horizontal flag not set in format
@@ -1031,17 +1072,17 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
         }
 
         let mut l: i32 = 0;
-        let mut r: i32 = BE::read_u16(&kern[10..]) as i32 - 1;
+        let mut r: i32 = read_u16(&kern[10..]) as i32 - 1;
         let needle = glyph_1 << 16 | glyph_2;
         while l <= r {
             let m = (l + r) >> 1;
-            let straw = BE::read_u32(&kern[18 + (m as usize) * 6..]); // note: unaligned read
+            let straw = read_u32(&kern[18 + (m as usize) * 6..]); // note: unaligned read
             if needle < straw {
                 r = m - 1;
             } else if needle > straw {
                 l = m + 1;
             } else {
-                return BE::read_i16(&kern[22 + (m as usize) * 6..]) as i32;
+                return read_i16(&kern[22 + (m as usize) * 6..]) as i32;
             }
         }
         0
@@ -1088,10 +1129,10 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
     pub fn get_bounding_box(&self) -> Rect<i16> {
         let head = &self.data[self.head as usize..];
         Rect {
-            x0: BE::read_i16(&head[36..]),
-            y0: BE::read_i16(&head[38..]),
-            x1: BE::read_i16(&head[40..]),
-            y1: BE::read_i16(&head[42..]),
+            x0: read_i16(&head[36..]),
+            y0: read_i16(&head[38..]),
+            x1: read_i16(&head[40..]),
+            y1: read_i16(&head[42..]),
         }
     }
 
@@ -1113,7 +1154,7 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
 
     /// Returns the units per EM square of this font.
     pub fn units_per_em(&self) -> u16 {
-        BE::read_u16(&self.data[self.head as usize + 18..])
+        read_u16(&self.data[self.head as usize + 18..])
     }
 
     /// computes a scale factor to produce a font whose EM size is mapped to
@@ -1202,8 +1243,8 @@ impl<Data: Deref<Target = [u8]>> FontInfo<Data> {
                 count: 0,
             };
         }
-        let count = BE::read_u16(&self.data[nm + 2..]) as usize;
-        let string_offset = nm + BE::read_u16(&self.data[nm + 4..]) as usize;
+        let count = read_u16(&self.data[nm + 2..]) as usize;
+        let string_offset = nm + read_u16(&self.data[nm + 4..]) as usize;
 
         FontNameIter {
             font_info: &self,
@@ -1235,17 +1276,17 @@ impl<'a, Data: 'a + Deref<Target = [u8]>> Iterator for FontNameIter<'a, Data> {
 
         let loc = self.font_info.name as usize + 6 + 12 * self.index;
 
-        let pl_id = platform_id(BE::read_u16(&self.font_info.data[loc..]));
+        let pl_id = platform_id(read_u16(&self.font_info.data[loc..]));
         let platform_encoding_language_id = pl_id.map(|pl_id| {
-            let encoding_id = BE::read_u16(&self.font_info.data[loc + 2..]);
-            let language_id = BE::read_u16(&self.font_info.data[loc + 4..]);
+            let encoding_id = read_u16(&self.font_info.data[loc + 2..]);
+            let language_id = read_u16(&self.font_info.data[loc + 4..]);
             platform_encoding_id(pl_id, Some(encoding_id), Some(language_id))
         });
         // @TODO: Define an enum type for Name ID.
         //        See https://www.microsoft.com/typography/otspec/name.htm, "Name IDs" section.
-        let name_id = BE::read_u16(&self.font_info.data[loc + 6..]);
-        let length = BE::read_u16(&self.font_info.data[loc + 8..]) as usize;
-        let offset = self.string_offset + BE::read_u16(&self.font_info.data[loc + 10..]) as usize;
+        let name_id = read_u16(&self.font_info.data[loc + 6..]);
+        let length = read_u16(&self.font_info.data[loc + 8..]) as usize;
+        let offset = self.string_offset + read_u16(&self.font_info.data[loc + 10..]) as usize;
 
         self.index += 1;
 
